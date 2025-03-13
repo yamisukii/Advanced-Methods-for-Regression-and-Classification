@@ -1,0 +1,258 @@
+---
+title: "Exercise 4 Advanced Methods for Regression and Classification"
+author: "12433732 - Stefan Merdian"
+date: "2024-11-11"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    extra_dependencies: ["booktabs", "longtable", "array", "caption"]
+  html_document:
+    df_print: paged
+---
+
+```{r setup}
+load("building.RData")
+require(pls)
+library(pls)
+```
+
+
+```{r echo=TRUE}
+set.seed(1)
+
+sample <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.7,0.3))
+train_data <- df[sample, ]
+test_data <- df[!sample, ]
+
+```
+# 1) Ridge Regression:
+## a)
+
+```{r echo=TRUE}
+library(glmnet)
+ridge <- glmnet(train_data[,-1],train_data$y,alpha=0)
+print(ridge)
+plot(ridge, xvar="lambda")
+```
+
+**Interpretation:**
+
+We see how the coefficients in a Ridge Regression model change as \( \lambda \) varies.
+On the left side of the plot, where `log(lambda)` is between -2 and 0, \( \lambda \) is small (around 0.1 to 1), meaning the regularization effect is weak, so the coefficients remain relatively large. As \( \lambda \) increases, moving to the right on the plot, the regularization strength grows, adding a penalty that causes the coefficients to shrink toward zero. This shrinking effect happens because Ridge Regression penalizes large coefficients to prevent overfitting. With higher \( \lambda \) values, the model becomes less sensitive to individual predictors, focusing only on the most impactful variables and creating a simpler, more stable model. The plot demonstrates how Ridge Regression balances between fitting the data and keeping coefficients small, with stronger regularization leading to more significant shrinkage.
+
+**Which default parameters are used for lambda?:**
+
+glmnet fits the model for 100 values of lambda by default.
+
+```{r echo=TRUE}
+plot(1:100, rev(ridge$lambda),xlab = "Index", ylab = "Lambda", 
+     main = "Lambda Values ",
+     col = "blue", lwd = 2)
+```
+
+**What is the meaning of the parameter alpha?:**
+
+When alpha is set to 0 (α = 0), the model applies only Ridge Regression. If α = 1 it is Lasso Regression.
+
+## b)
+
+```{r echo=TRUE}
+x <- as.matrix(train_data[,-1])
+cv_fit <- cv.glmnet(x,train_data$y,alpha=0)
+print(cv_fit)
+plot(cv_fit)
+```
+
+**How do you obtain the optimal tuning parameter and the regression coefficients?: **
+
+Intuitively, we might choose the model with the lowest MSE score, which corresponds to the smallest λ value, essentially resembling a least squares model. However, to avoid overfitting, we select the largest λ value within one standard error of the minimum cross-validation error. This choice provides a more generalized model that is likely to perform better on unseen data.
+
+In the plot, the first vertical line represents the λ value with the lowest MSE. The second vertical line represents the λ within one standard error of the minimum MSE. 
+
+So we do:
+
+```{r echo=TRUE}
+optimal_lambda_min <- cv_fit$lambda.min
+optimal_lambda_1se <- cv_fit$lambda.1se
+
+cat("lambda (min):", optimal_lambda_min, "\n")
+cat("Optimal lambda (1se), the one we will pick:", optimal_lambda_1se, "\n")
+```
+```{r echo=TRUE}
+coef_1se <- coef(cv_fit, s = "lambda.1se")
+
+```
+
+## c)
+
+```{r echo=TRUE}
+x_test <- as.matrix(test_data[,-1])
+pred.ridge <- predict(cv_fit, newx = x_test, s = "lambda.1se")
+sqrt(mean((test_data$y-pred.ridge)^2))
+```
+```{r echo=TRUE}
+
+plot(test_data$y, pred.ridge, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Ridge",
+     pch = 16, col = "blue")
+
+abline(0, 1, col = "red", lwd = 2)
+
+```
+```{r echo=TRUE}
+rmse <- sqrt(mean((test_data$y-pred.ridge)^2))
+cat('Ridge RMSE for test data:',rmse)
+```
+
+EX2:
+
+ - RMSE all predictors: 0.6334959
+ 
+ - RMSE value for the subReg (10 Predictors) model: 0.2527903
+ 
+EX3:
+
+ - RMSE PCR 32 Components :  0.2582652
+ 
+ - RMSE PLS 13 Components : 0.2749538
+EX4:
+
+ - Ridge RMSE for test data: 0.258288
+
+# Task 2)
+## a)
+```{r echo=TRUE}
+lasso <- glmnet(train_data[,-1], train_data$y, alpha = 1)
+print(lasso)
+plot(lasso, xvar='lambda')
+```
+
+**Interpretation:**
+
+Lasso can shrinks coefficients to zero, as λ increase. Higher lambda values lead to more aggressive regularization, while lower values allow the model to be less constrained. As we move further to the right, the model simplifies by selecting only the most important predictors, meaning some coefficients shrink in importance or become zero.
+
+**Which default parameters are used for lambda?:**
+
+By default, glmnet creates 100 lambda values, giving a fine-grained path to explore the effect of different regularization strengths on the model.
+
+```{r echo=TRUE}
+plot(1:100, rev(lasso$lambda),xlab = "Index", ylab = "Lambda", 
+     main = "Lambda Values for Lasso ",
+     col = "blue", lwd = 2)
+```
+
+## b)
+
+```{r echo=TRUE}
+cv_fit_lasso <- cv.glmnet(x, train_data$y, alpha = 1)
+plot(cv_fit_lasso)
+```
+Moving from left to right, λ decreases, meaning the regularization strength weakens. Smaller λ values allow more flexibility in the model, resulting in more complex models with more non-zero coefficients. The left dashed line corresponds to lambda.min, the λ value that gives the minimum MSE. The right dashed line corresponds to lambda.1se, the largest λ within one standard error of the minimum MSE. The same like in the Ridge Plot.
+
+**How do you obtain the optimal tuning parameter and the regression coefficients?: **
+
+Same like in Ridge regression we take the largest λ within one standard error of the minimum MSE. This choice provides a more generalized model that is likely to perform better on unseen data. So we will take the regression coefficients that Lasso has for lambda.1se
+
+So we do:
+
+```{r echo=TRUE}
+optimal_lambda_min_lasso <- cv_fit_lasso$lambda.min
+optimal_lambda_1se_lasso <- cv_fit_lasso$lambda.1se
+
+cat("lambda (min):", optimal_lambda_min_lasso, "\n")
+cat("Optimal lambda (1se), the one we will pick:", optimal_lambda_1se_lasso, "\n")
+```
+
+## c)
+
+```{r echo=TRUE}
+
+pred.lasso <- predict(cv_fit_lasso, newx = x_test, s = "lambda.1se")
+sqrt(mean((test_data$y-pred.lasso)^2))
+```
+
+```{r echo=TRUE}
+
+plot(test_data$y, pred.lasso, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Lasso",
+     pch = 16, col = "blue")
+
+abline(0, 1, col = "red", lwd = 2)
+
+```
+
+EX2:
+
+ - RMSE all predictors: 0.6334959
+ 
+ - RMSE value for the subReg (10 Predictors) model: 0.2527903
+ 
+EX3:
+
+ - RMSE PCR 32 Components :  0.2582652
+ 
+ - RMSE PLS 13 Components : 0.2749538
+ 
+EX4:
+
+ - Ridge RMSE for test data: 0.258288
+ 
+ - Lasso RMSE for test data: 0.260731
+ 
+ 
+# 3)
+## a)
+
+```{r echo=TRUE}
+
+coef.ridge <- coef(cv_fit, s = "lambda.1se")
+alasso <- glmnet(x,train_data$y,penalty.factor = 1 / abs(coef.ridge[-1]))
+plot(alasso, xvar="lambda")
+```
+
+We are seening now the plot for adaptive lasso. The interpration ist the same. The key diffrence here is, we changed the penalty factor to **penalty.factor = 1 / abs(coef.ridge[-1])**. The idea is to penalize less important variables more heavily, which increases their likelihood of being shrunk to zero, while penalizing more important variables less, allowing them to remain in the model. 
+**1 / abs(coef.ridge[-1])** creates adaptive weights for each predictor, where the weight for each predictor is the inverse of its absolute Ridge coefficient. This means that predictors with larger Ridge coefficients will have smaller penalties penalty, making them less likely to be shrunk to zero.
+
+## b)
+
+```{r echo=TRUE}
+alasso.cv <- cv.glmnet(x,train_data$y,penalty.factor = 1 / abs(coef.ridge[-1]))
+plot(alasso.cv)
+```
+
+Here the same again. The left dashed line corresponds to lambda.min, the λ value that gives the minimum MSE. The right dashed line corresponds to lambda.1se, the largest λ within one standard error of the minimum MSE.
+
+## c)
+
+```{r echo=TRUE}
+pred.alasso <- predict(alasso.cv, newx = x_test, s = "lambda.1se")
+sqrt(mean((test_data$y-pred.alasso)^2))
+```
+
+```{r echo=TRUE}
+
+plot(test_data$y, pred.alasso, 
+     xlab = "Actual Values", ylab = "Predicted Values", 
+     main = "Adaptive Lasso",
+     pch = 16, col = "blue")
+
+abline(0, 1, col = "red", lwd = 2)
+
+```
+EX2:
+ - RMSE all predictors: 0.6334959
+ - RMSE value for the subReg (10 Predictors) model: 0.2527903
+EX3:
+ - RMSE PCR 32 Components :  0.2582652
+ - RMSE PLS 13 Components : 0.2749538
+EX4:
+ - Ridge RMSE for test data: 0.258288
+ - Lasso RMSE for test data: 0.260731
+ - Adaptive Lasso RMSE for test data: 0.264656
+ 
+**Is the model more plausible for the interpretation?:**
+
+Yes, by using Ridge Regression coefficients as weights, Adaptive Lasso can assign different penalties to different predictors. Variables with higher Ridge coefficients are penalized less, making it more likely that they will be included in the model. This results in a model that is more likely to retain important variables while shrinking or eliminating less relevant ones, improving interpretability. Standard Lasso can be overly aggressive in shrinking coefficients, sometimes removing variables that might be important. So compared to standard lasso, this one reduces unnecessary shrinkage on significant predictors. Especially for interpretation, Adaptive Lasso provides a more focused model by highlighting the most important variables. However, this approach relies on the assumption that the Ridge coefficients were selected appropriately. If the Ridge model selected variables poorly, the Adaptive Lasso model may also lack accuracy.

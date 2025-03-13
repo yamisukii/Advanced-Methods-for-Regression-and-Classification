@@ -1,0 +1,273 @@
+---
+title: "Exercise 2 - Advanced Methods for Regression and Classification"
+author: "12433732 - Stefan Merdian"
+date: "2024-10-26"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    extra_dependencies: ["booktabs", "longtable", "array", "caption"]
+  html_document:
+    df_print: paged
+documentclass: article
+geometry: 
+  - top=10mm
+  - bottom=15mm
+  - left=10mm
+  - right=10mm
+papersize: a4
+fontsize: 8pt
+---
+
+
+
+```{r setup}
+load("building.RData")
+```
+
+
+```{r echo=TRUE}
+set.seed(1)
+
+sample <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.7,0.3))
+train_x <- df[sample, !(names(df) %in% "y")]
+test_x <- df[!sample, !(names(df) %in% "y")]
+train_y <- df$y[sample ]
+test_y <- df$y[!sample ]
+train_data <- cbind(train_x, y = train_y)
+
+```
+
+# 1) Compute the full model with lm()
+
+```{r echo=TRUE}
+full_model <- lm(y ~ ., data = train_data)
+
+```
+##a)
+
+```{r echo=TRUE}
+fitted_values <- predict(full_model, newdata = train_x)
+plot(fitted_values, train_y,
+     xlab = "Fitted Values",
+     ylab = "Actual Response",
+     main = "Fitted Values vs Response",
+     pch = 16,  
+     col = "blue")  
+abline(0, 1, col = "red", lwd = 2)
+
+rmse <- sqrt(mean((train_y - fitted_values)^2))
+
+cat('<\n> RMSE for the Full-model: ', rmse)
+```
+
+## b)
+
+We performing CrossValiation with 5 folders anf with 100 replications.
+```{r echo=TRUE}
+library(cvTools)
+cv_results <- cvFit(full_model,data = train_data, y = train_data$y,cost = rmspe, K = 5, R = 100)
+
+print(cv_results)
+```
+
+```{r echo=TRUE}
+head(cv_results)
+cv_errors <- cv_results$reps[, 1]
+boxplot(cv_errors,
+        ylim= c(0, 20),
+        main = "Distribution of Cross-Validation Errors",
+        ylab = "Error Measure (RMSPE)",
+        col = "lightblue")
+```
+
+- The interquartile range is around 1 and 6.
+- The median is around 1-2.
+- The whisker extend from approximately 1 to 12.
+- Outliers going from around 13- 18.
+
+What do we conclude?:
+
+- The model generally performs well, but there are some instances of significant error that may affect its reliability.
+- To improve the model, it would be beneficial to investigate the outliers further. -> Whats the cause for that?
+
+
+## c)
+
+What are we doing?
+ - We will perform Cross-Validation again with the same data, but this time we will change the cost function to RTMSPE. RTMSPE provides an error value in percentage terms rather than in absolute values.
+```{r echo=TRUE}
+cv_resultsT <- cvFit(full_model,data = train_data, y = train_data$y,cost = rtmspe, K = 5, R = 100)
+
+```
+
+```{r echo=TRUE}
+cv_errorsT <- cv_resultsT$reps[, 1]
+boxplot(cv_errorsT,
+        ylim= c(0.1, 0.2),
+        main = "Distribution of Cross-Validation Errors",
+        ylab = "Error Measure (RTMSPE)",
+        col = "lightblue")
+```
+- the RTMSPE values are significantly lower rngign between 14-17%
+- the space is more compact and has lower variability
+- The errors are tightly clustered around a median
+
+-->  the RTMSPE boxplot is thighter compared to the RMSPE, because of the root transformation --> which reduces the effect of outliers and compresses the higher error values
+
+## d)
+```{r echo=TRUE}
+test_pred <- predict(full_model, newdata = test_x)
+plot(test_y, test_pred,
+     main = "Observed vs. Predicted (Test Data)",
+     xlab = "Observed Values",
+     ylab = "Predicted Values",
+     col = "blue", pch = 16)
+
+abline(0, 1, col = "red")
+
+rmse <- sqrt(mean((test_y - test_pred)^2))
+
+cat('<\n> RMSE for the test data: ', rmse)
+```
+- The model shows a good linear relationship.
+- Predicts very well already.
+- Has some outliers which probably lead also to the RMSE value around **0.63**
+
+# 2) Best subset regression:
+
+## a)
+
+First we remove all coef which don't get value.
+
+(Possible Reason for na:
+- Some predictors had missing values from the beginning.
+
+
+```{r echo=TRUE}
+current_model<- full_model
+model_coefs <- coef(full_model)
+na_predictors <- names(model_coefs[is.na(model_coefs)])
+
+if (length(na_predictors) > 0) {
+  na_predictors_str <- paste(na_predictors, collapse = " - ")
+  updated_formula <- as.formula(paste(". ~ . -", na_predictors_str))
+  current_model <- update(full_model, updated_formula, data = train_data)
+  
+  message("Removed predictors with NA coefficients: ", na_predictors_str)
+} else {
+  current_model <- full_model
+}
+```
+
+As the next step, we use the drop1() function repeatedly until the model is reduced to just 50 predictors. In each step, we drop the least significant predictor based on its contribution to reducing the model error, continuing this process until only 50 predictors remain
+```{r echo=TRUE}
+
+while (length(attr(terms(current_model), "term.labels")) > 50) {
+  drop_result <- drop1(current_model, test = "F")
+  term_to_drop <- rownames(drop_result)[which.max(drop_result$`Pr(>F)`)]
+  updated_formula <- as.formula(paste(". ~ . -", term_to_drop))
+  current_model <- update(current_model, updated_formula)
+  
+}
+
+final_model_50 <- current_model
+
+summary(final_model_50)
+```
+
+We save the remaining predictors and build a new reduced_model with them.
+```{r echo=TRUE}
+
+selected_predictors <- attr(terms(final_model_50), "term.labels")
+
+train_data_reduced <- train_data[, c(selected_predictors, "y"), drop = FALSE]
+```
+
+Now we identify the best subset of predictors from the reduced_dataset. We limiting the number of predictors to **10** (nvmax = 10).
+```{r echo=TRUE}
+library(leaps)
+
+best_subset <- regsubsets(y ~ ., data = train_data_reduced, nvmax = 10, really.big = TRUE)
+
+best_subset_summary <- summary(best_subset)
+
+```
+
+
+## b)
+```{r echo=TRUE}
+plot(best_subset)
+```
+We can see that the best model, which has the lowest BIC value, is represented in the first row of the plot. All black-colored squares indicate the predictors that are included in this model.
+
+
+```{r echo=TRUE}
+names(best_subset_summary) 
+plot(best_subset_summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+coef(best_subset,10)
+```
+## c)
+- Extracts the coefficients of the best model with 10 predictors.
+- Identifies the names of the selected predictors, excluding the intercept.
+- Creates a formula for the model using these selected predictors.
+- Reduces both the training and testing datasets
+
+```{r echo=TRUE}
+
+best_coef<- coef(best_subset,10)
+selected_predictors <- names(best_coef)[-1]
+final_formula <- as.formula(paste("y ~", paste(selected_predictors, collapse = " + ")))
+train_data_reduced <- train_data[, c(selected_predictors, "y"), drop = FALSE]
+test_data_reduced <- test_x[, c(selected_predictors), drop = FALSE]
+```
+
+Train model and perform CrossValidation again.
+```{r echo=TRUE}
+reg_model <- lm(y ~ ., data = train_data_reduced)
+cv_resultsRegModelRmspe <- cvFit(reg_model,data = train_data_reduced, y = train_data$y,cost = rtmspe, K = 5, R = 100)
+cv_resultsRegModelRtmspe <- cvFit(reg_model,data = train_data_reduced, y = train_data$y,cost = rtmspe, K = 5, R = 100)
+```
+
+Plotting results.
+```{r echo=TRUE}
+cv_errors_subReg <- cv_resultsRegModelRmspe$reps[, "CV"]
+boxplot(cv_errors_subReg, cv_errors,ylim= c(0, 3),
+        main = "Distribution of Cross-Validation Errors",
+        ylab = "Error Measure (RMSPE)",names = c("SubReg Model", "Full Model") ,col = c("skyblue", "orange"), main = "RMSPE")
+```
+- The SubReg Model has significantly lower cross-validation errors compared to the Full Model and much more compact error spread.
+
+
+```{r echo=TRUE}
+cv_errors_subRegT <- cv_resultsRegModelRmspe$reps[, "CV"]
+boxplot(cv_errors_subRegT, cv_errorsT,ylim= c(0.1, 0.2),
+        main = "Distribution of Cross-Validation Errors",
+        ylab = "Error Measure (RTMSPE)",names = c("SubReg Model", "Full Model") ,col = c("skyblue", "orange"), main = "RMSPE")
+```
+
+## d) 
+
+```{r echo=TRUE}
+test_predSubreg <- predict(reg_model, newdata = test_data_reduced)
+
+plot(
+  test_y,
+  test_predSubreg,
+  main = "Observed vs. Predicted (Test Data)",
+  xlab = "Observed Values",
+  ylab = "Predicted Values",
+  col = "blue",
+  pch = 16
+)
+
+
+abline(0, 1, col = "red")
+```
+```{r echo=TRUE}
+rmseSunReg <- sqrt(mean((test_y - test_predSubreg)^2))
+cat("\nThe RMSE value for the subReg model is:", rmseSunReg)
+cat("\nThe RMSE value for the model with all predictors was:", rmse)
+```
+
+

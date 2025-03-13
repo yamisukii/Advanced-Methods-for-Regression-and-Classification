@@ -1,0 +1,218 @@
+---
+title: "Exercise 5 - Advanced Methods for Regression and Classification"
+author: "12433732 - Stefan Merdian"
+date: "2024-11-17"
+output: pdf_document
+---
+
+```{r setup}
+library(ROCit)
+data("Loan", package = "ROCit")
+
+```
+
+```{r echo=TRUE}
+str(Loan)
+head(Loan)
+summary(Loan)
+```
+Status is factor variable, therefore we convert it to a numeric data. We ensure that the variable are mapped as 0 & 1.
+```{r echo=TRUE}
+
+indicator <- Loan$Status
+
+Loan$Status <- ifelse(Loan$Status == "CO", 0, 1)
+
+#data.frame(Status = indicator, NumericStatus = Loan$Status)
+
+```
+
+# 1)
+
+```{r echo=TRUE}
+
+set.seed(123)
+
+sample <- sample(c(TRUE, FALSE), nrow(Loan), replace=TRUE, prob=c(0.7,0.3))
+train_data <- Loan[sample, ]
+test_data <- Loan[!sample, ]
+```
+
+**Is any data preprocessing necessary or advisable?**
+
+We have some issues here:
+
+1. Least squares regression is influenced by the scale of the predictors because it minimizes the sum of squared residuals. Predictors with larger scales can disproportionately impact the regression coefficients, leading to biased results. To address this, all numeric variables should be standardized, ensuring that each predictor contributes fairly regardless of its original scale.
+
+2. The Term column in the dataset contains only a single unique value (36). Variables with no variation do not provide any useful information for the model and can cause issues during regression. Therefore, the Term column should be removed before building the model.
+
+3. Also the 'Term' predictor has just one value for all data points. So we can leave it out, since it wouldn't have any impact for our model.
+
+We split the data before preprocessing to avoid data leakage. This ensures that the test set remains completely unseen during training, so the model is evaluated on data it has never encountered, giving a more realistic measure of its performance.
+
+### Preprocessing 
+```{r echo=TRUE}
+
+# Remove the 'Term' column 
+train_data <- train_data[, !names(train_data) %in% "Term"]
+test_data <- test_data[, !names(test_data) %in% "Term"]
+
+# # Standardizing
+numeric_cols <- sapply(train_data, is.numeric)
+numeric_cols["Status"] <- FALSE
+train_scaled <- scale(train_data[numeric_cols])
+
+scaling_params <- attr(train_scaled, "scaled:center")
+scaling_scales <- attr(train_scaled, "scaled:scale")
+
+test_scaled <- scale(test_data[numeric_cols], center = scaling_params, scale = scaling_scales)
+ 
+train_data[numeric_cols] <- train_scaled
+test_data[numeric_cols] <- test_scaled
+```
+
+
+### Model
+```{r echo=TRUE}
+lm_model <- lm(Status ~ ., data = train_data)
+```
+
+
+# 2)
+
+```{r echo=TRUE}
+summary(lm_model)
+```
+
+**What do you conclude?**
+
+- The line "(1 not defined because of singularities)" indicates that one of the predictors is perfectly collinear with others or provides no additional information. This means the model could not assign a coefficient to it because of redundancy. In this case, 'Score' did not receive a coefficient due to perfect collinearity.
+
+- 'IntRate' ans 'HomeOWN'  are significant.
+
+- Many other variables have high p-values, suggesting they do not contribute significantly to predicting Status. They are not helpful in explaining the variation in Status in this linear model.
+
+- R-squared value of 6.27% indicates that only a small fraction of the variance in Status is explained by this model, which is quite low. The Adjusted R-squared of 4.77% further confirms that the model does not improve substantially even with the added predictors.
+
+
+Conclusion:  Some Predictors highly correlated, causing no coefficient in one estimates. Overall we can see this linear model is not suitable for this problem. Since Status is a binary variable, using linear regression (lm()) might not be ideal.
+ 
+# 3)
+
+```{r echo=TRUE}
+plot(lm_model)
+```
+**Shall we be worried?**
+
+These diagnostics overall indicate that the assumptions of linear regression are violated. Given that 'Status' is a binary variable, just shows that lm() is not ideal for binary prediction. This can lead to biased predictions, poor generalization, and unreliable statistics. 
+
+
+## 4)
+
+```{r echo=TRUE}
+
+train_predictions <- predict(lm_model, newdata = train_data)
+
+
+plot(train_data$Status, train_predictions,
+     col = as.factor(train_data$Status), 
+     pch = 19,                         
+     xlab = "Status",
+     ylab = "Prediction",
+     main = "Prediciton vs. Real Classes")
+
+
+abline(h = 0.7, col = "blue", lty = 2)
+
+legend("topleft",
+       legend = unique(train_data$Status), 
+       col = 1:length(unique(train_data$Status)), 
+       pch = 19,
+       title = "Classes")
+
+```
+
+ **Which cutoff value would be useful in order to obtain reasonable class predictions?**
+ 
+ To visualize the predicted values compared to the actual class labels, we create a scatter plot where the x-axis shows the true values and the y-axis shows the predicted ones. It's pretty clear that the model isn’t great since it’s predicting values between 0 and 1 (and even some above 1), which doesn’t make sense for a binary variable. 
+ 
+We can see that class 0 generally has lower prediction values compared to class 1. Given this, we can consider a cutoff around 0,7. This is still not ideal! There is probably no good option here.
+ 
+# 5)
+
+```{r echo=TRUE}
+cutoff <- 0.7
+
+predicted_classes <- ifelse(train_predictions > cutoff, 1, 0)
+
+con_matrix = table(Actual = train_data$Status, Predicted = predicted_classes)
+print(con_matrix)
+```
+**Which conclusions can you draw from these numbers?**
+
+ - True Positives (TP): 531 instances of class 1 were correctly predicted as 1.
+
+ - True Negatives (TN): 9 instances of class 0 were correctly predicted as 0.
+ 
+ - False Positives (FP): 81 instances of class 0 were incorrectly predicted as 1.
+ 
+ - False Negatives (FN): 13 instances of class 1 were incorrectly predicted as 0.
+
+Based on these values, we can see that the model performs well at identifying the majority class 1, with high recall (97.6%) and decent precision (86.8%). However, the model performs poorly at identifying the minority class 0, with low recall (10%) and precision (10%).
+
+The high number of False Positives (81) and the low number of True Negatives (9) indicate that the model struggles to correctly identify class 0.
+
+Overall, the model classifies most of the data as class 1. Since class 1 is heavily represented in the dataset, the model achieves higher accuracy for this class. However, as a whole, the model does not function effectively as a proper classifier, particularly in distinguishing the minority class 0.
+
+# 6)
+
+```{r echo=TRUE}
+roc <- rocit(train_predictions,train_data$Status)
+summary(roc)
+plot(roc)
+```
+
+We can see in the summary, that there are 549 positive cases (class 1) and 90 negative cases (class 0). This confirms that the dataset is highly imbalanced, with many more positives than negatives. The AUC value is0.6958, which indicates the model has limited ability to distinguish between class 0 and class 1.
+
+A good classifier would have an AUC of 1, while an AUC of 0.5 means the model is no better than random guessing, so our model performs slightly better than random but is far from ideal.
+
+The ROC Curve:
+
+The dotted diagonal line represents a model that performs no better than random guessing. So at least we can see our Model is better than rando guessing. The point marked as "Optimal (Youden Index) point" identifies the threshold where the model achieves the best balance between TPR and FPR. As you move along the curve, increasing TPR comes at the cost of increasing FPR. So our optimal point is around 0.75. 
+
+
+
+# 7)
+
+```{r echo=TRUE}
+measure <- measureit(train_predictions,train_data$Statu,measure=c("TPR","TNR"))
+measure$BalancedAccuracy <- (measure$TPR + measure$TNR) / 2
+
+plot(measure$BalancedAccuracy ~ measure$Cutoff, type = "l", col = "blue", lwd = 2,
+     xlab = "Cutoff", ylab = "Balanced Accuracy", 
+     main = "Balanced Accuracy vs Cutoff")
+
+# optimal cutoff with the highest Balanced Accuracy
+optimal_cutoff <- measure$Cutoff[which.max(measure$BalancedAccuracy)]
+cat("Optimal Cutoff (Highest Balanced Accuracy):", optimal_cutoff, "\n")
+```
+# 8)
+
+```{r echo=TRUE}
+
+test_predictions <- predict(lm_model, newdata = test_data)  
+
+test_predicted_classes <- ifelse(test_predictions > optimal_cutoff, 1, 0)
+
+con_matrix = table(Actual = test_data$Status, Predicted = test_predicted_classes)
+print(con_matrix)
+
+```
+**What are your final conclusions?**
+
+On the test data and using the optimal cutoff, the model correctly classified 167 instances of class 1 (True Positives) and also correctly classified 14 instances of class 0 (True Negatives). However, it incorrectly classified 27 instances of class 0 as class 1 (False Positives) and 58 instances of class 1 as class 0 (False Negatives). The model struggles with imbalanced classes and has difficulty correctly identifying the minority class, which is class 0.
+
+While it performs moderately well on identifying class 1, its performance for class 0 remains quite poor. The imbalance between the classes remains an issue, resulting in low performance in recognizing the minority class (class 0). Overall, there are many things we could try to improve the model, but it is clear that linear regression is not optimal for this classification problem. However, it actually performed better than initially expected, but still not good enough to be used effectively in practice.
+
+
+

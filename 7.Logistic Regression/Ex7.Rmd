@@ -1,0 +1,265 @@
+---
+title: "Exercise 7 Advanced Methods for Regression and Classification"
+author: "Stefan Merdian"
+date: "2024-12-02"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    extra_dependencies: ["booktabs", "longtable", "array", "caption"]
+---
+
+```{r echo=TRUE}
+df <- read.csv2("bank.csv")
+str(df)
+```
+```{r echo=TRUE}
+
+categorical_cols <- c("job", "marital", "education", "default", 
+                      "housing", "loan", "contact", "month", "poutcome","y")
+df[categorical_cols] <- lapply(df[categorical_cols], as.factor)
+
+```
+
+# 1)
+
+## a)
+
+```{r echo=TRUE}
+set.seed(1)
+
+df$duration <- NULL
+train_indices <- sample(nrow(df), 3000, replace = FALSE)
+train_data <- df[train_indices, ]   
+test_data <- df[-train_indices, ] 
+```
+
+
+```{r echo=TRUE}
+log.reg <- glm(y ~ ., data = train_data, family = "binomial")
+summary(log.reg)
+```
+The Null Deviance (2112.3) represents the deviance of a model with only the intercept, serving as a baseline for comparison. The Residual Deviance (1766.6), significantly lower, indicates that the addition of predictors improves the model's fit. AIC is 1850.6. 
+
+A positive coefficient means that as the predictor increases, the likelihood of the outcome also increases, while a negative coefficient indicates a decrease in likelihood. The z-value, calculated as the ratio of the coefficient to its standard error. Higher absolute z-values indicate greater statistical significance, with predictors showing significant contributions to the model having small p-values.
+
+For example, consider the coefficient for Contactunknown (-1.014). This means that if the contact information is unknown, the log-odds of success decrease by 1.014 compared to the baseline category. The corresponding z-value of -4.232 and a p-value less than 0.001 indicate that this effect is highly significant. Similarly, Poutcomesuccess has a positive coefficient of 2.284, suggesting that previous campaign success substantially increases the likelihood of success in the current campaign. Its z-value of 7.235 and very small p-value confirm this predictor’s strong significance.
+
+In contrast, the variable Age has a very small coefficient (0.001165) and a low z-value (0.149), indicating it has little impact on the outcome, as its effect is not statistically significant.
+
+Six iterations for Fisher Scoring suggest the model converged without computational issues, indicating stability in parameter estimation.
+
+## b)
+```{r echo=TRUE}
+predicted_probs <- predict(log.reg, newdata = test_data, type = "response")
+predicted_labels <- factor(ifelse(predicted_probs >= 0.5, 1, 0), levels = c(0, 1))
+
+# Create the confusion matrix
+confusion <- table(Predicted = predicted_labels, Actual = test_data$y)
+print(confusion)
+
+misclassification_rate_0 <- confusion[2, 1] / sum(confusion[, 1])
+
+misclassification_rate_1 <- confusion[1, 2] / sum(confusion[, 2])
+
+cat("Misclassification Rate (Class 0):", misclassification_rate_0, "\n")
+cat("Misclassification Rate (Class 1):", misclassification_rate_1, "\n")
+
+sensitivity_1 <- 1 - misclassification_rate_1  # Sensitivity (Class 1 Recall)
+specificity_0 <- 1 - misclassification_rate_0  # Specificity (Class 0 Recall)
+
+balanced_accuracy <- (sensitivity_1 + specificity_0) / 2
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+```
+
+## c)
+
+```{r}
+# Get class proportions
+class_counts <- table(train_data$y)
+
+weights <- ifelse(train_data$y == "no", 
+                  1 / class_counts["no"],  
+                  1 / class_counts["yes"])  
+weights <- weights / mean(weights)
+ 
+summary(weights)
+
+```
+
+```{r}
+log.reg_weighted <- glm(y ~ ., data = train_data, family = "binomial", weights = weights)
+
+predicted_probs <- predict(log.reg_weighted, newdata = test_data, type = "response")
+predicted_labels <- factor(ifelse(predicted_probs >= 0.5, 1, 0), levels = c(0, 1))
+
+confusion <- table(Predicted = predicted_labels, Actual = test_data$y)
+print(confusion)
+
+misclassification_rate_0 <- confusion[2, 1] / sum(confusion[, 1])
+misclassification_rate_1 <- confusion[1, 2] / sum(confusion[, 2])
+
+sensitivity_1 <- 1 - misclassification_rate_1  # Sensitivity (Class 1 Recall)
+specificity_0 <- 1 - misclassification_rate_0  # Specificity (Class 0 Recall)
+
+balanced_accuracy <- (sensitivity_1 + specificity_0) / 2
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+
+```
+
+**How do we have to select the weights, and what is the resulting balanced accuracy?:**
+
+To handle imbalanced data in logistic regression, weights are used to give more importance to observations from the minority class during model training. So we chose the weights based on the inverse of the class sizes, so the smaller class (yes) gets a higher weight, and the larger class (no) gets a smaller weight. This ensures the model focuses more on the minority class, balancing its influence
+
+Indeed the resulting balanced accuracy increased to : **0.6444167 **
+
+## d)
+
+```{r}
+full_model <- glm(y ~ ., data = train_data, family = "binomial", weights = weights)
+
+simplified_model <- step(full_model, direction = "both")
+
+summary(simplified_model)
+
+```
+
+```{r}
+
+predicted_probs <- predict(simplified_model, newdata = test_data, type = "response")
+
+predicted_labels <- factor(ifelse(predicted_probs >= 0.5, 1, 0), levels = c(0, 1))
+
+confusion <- table(Predicted = predicted_labels, Actual = test_data$y)
+print(confusion)
+
+misclassification_rate_0 <- confusion[2, 1] / sum(confusion[, 1])
+misclassification_rate_1 <- confusion[1, 2] / sum(confusion[, 2])
+
+sensitivity_1 <- 1 - misclassification_rate_1  # Sensitivity (Class 1 Recall)
+specificity_0 <- 1 - misclassification_rate_0  # Specificity (Class 0 Recall)
+
+balanced_accuracy <- (sensitivity_1 + specificity_0) / 2
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+
+```
+**Does this also lead to an improvement of the balanced accuracy?:**
+
+The performance did not improve; in fact, it became 0.001 worse than before. However, the model is now significantly simpler, achieving nearly the same accuracy with only 11 predictors instead of 16!
+
+# 2)
+
+```{r}
+library("ISLR")
+data(Khan) 
+str(Khan)
+```
+
+## a)
+**Why would LDA or QDA not work here?:**
+
+The dataset contains 2308 gene expression features for a limited number of tissue samples. LDA and QDA rely on the estimation of covariance matrices, which require the number of observations to be much larger than the number of features. When p>n, the covariance matrix becomes singular, making these methods mathematically infeasible.
+
+QDA is even more sensitive to high dimensionality because it estimates a separate covariance matrix for each class, requiring a greater number of observations per class.
+
+**Would RDA work?:**
+RDA applies a shrinkage approach to the covariance matrix. By regularizing the covariance matrix, RDA avoids singularity issues even when p>n. But the lambda needs to be picked carefully. When λ=1, RDA becomes equivalent to LDA, which assumes a single pooled covariance matrix for all classes. When λ=0λ=0, RDA becomes equivalent to QDA, estimating a separate covariance matrix for each class. So we run in the same issues like we would use LDA and RDA by their own. RDA can handle high-dimensional datasets effectively only if λ is correctly set.
+
+
+```{r}
+library(glmnet)
+ytrain <- as.factor(Khan$ytrain)
+cv_model <- cv.glmnet(x = Khan$xtrain, y = ytrain, family = "multinomial")
+plot(cv_model)
+```
+**What do you conclude?:**
+
+X-axis Represents the logarithm of the regularization parameter λ. Moving to the left corresponds to smaller values of λ, meaning less regularization and a more complex model. Y-axis represents the cross-validated multinomial deviance. Lower values are better.
+
+First dashed line:
+This is the λ that minimizes the cross-validated multinomial deviance and balances complexity with performance. This λ provides the best model on the training data
+
+Seconded dashed line:
+Is the λ with 1SE from the minimal lambda (first dashed line).It reduces a small amount of performance. This is often preferred in practice as it avoids overfitting and enhances model generalization.
+
+**What is the objective function to be minimized?:**
+
+For multinomial logistic regression with regularization, glmnet minimizes the following objective function:
+
+Objective Function=Loss Function + Penalty Term
+
+The Loss functio is a Multinomial Negative Log-Likelihood. It calculates the log probability of the predicted class for each observation. The goal is to maximize the likelihood of the true classes. By minimizing the negative log-likelihood, the model is encouraged to assign high probabilities to the correct classes
+
+The penalty term is a value (λ) to prevent overfitting and reduce complexity. 
+By adjusting λ, the model trades off between these two goals:
+
+Small λ: The model prioritizes fitting the data well, leading to complex models.
+Large λ: The model prioritizes simplicity by heavily penalizing large coefficients, leading to simpler models.
+
+glmnet use elastic net regularization, which combines L1 (lasso) and L2 (ridge) penalties. By default, glmnet uses a mixing parameter α=1, which corresponds to lasso regularization.
+
+
+## c)
+
+```{r}
+
+coefficients <- coef(cv_model, s = "lambda.1se")
+
+get_non_zero_coefficients <- function(coef_matrix) {
+  non_zero <- which(as.matrix(coef_matrix) != 0, arr.ind = TRUE)
+
+  data.frame(
+    variable = rownames(coef_matrix)[non_zero[, 1]],
+    coefficient = coef_matrix[non_zero]
+  )
+}
+
+non_zero_coefficients_list <- lapply(coefficients, get_non_zero_coefficients)
+non_zero_coefficients_list
+
+```
+
+## d)
+
+```{r}
+library(ggplot2)
+selected_variable <- Khan$xtrain[, 1427]
+response_variable <- Khan$ytrain
+
+data <- data.frame(
+variable = selected_variable,
+response = factor(response_variable))
+ggplot(data, aes(x = response, y = variable, fill = response)) +
+geom_boxplot() +
+labs(title = "Selected Variable vs. Response",
+x = "Group",
+y = "Selected Variable Value")
+
+```
+The boxplot shows the distribution of the selected variable's values across the response groups. For the first group (response = 1), the values are notably lower compared to the other groups. In contrast, groups 2, 3, and 4 have higher medians and more overlap, suggesting a distinct difference in the variable's behavior for group 1 compared to the others. 
+
+## e)
+
+```{r}
+
+y_probs <- predict(cv_model, newx = Khan$xtest, s = "lambda.1se", type = "response")
+test_pred <- apply(y_probs, 1, which.max)
+predictions <- factor(test_pred, labels = c("Group 1", "Group 2", "Group 3", "Group 4"))
+confusion_table <- table(
+  Predicted = predictions,
+  Actual = factor(Khan$ytest, labels = c("Group 1", "Group 2", "Group 3", "Group 4"))
+)
+
+print(confusion_table)
+
+```
+All predictions are correct. So the misclassification rate will be 0, as we can see:
+
+```{r}
+
+incorrect_predictions <- sum(confusion_table) - sum(diag(confusion_table))
+total_predictions <- sum(confusion_table)
+misclassification_rate <- incorrect_predictions / total_predictions
+print(paste("Misclassification Rate:", round(misclassification_rate, 4)))
+
+```

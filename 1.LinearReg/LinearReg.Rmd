@@ -1,0 +1,423 @@
+---
+title: "Exercise 1- Advanced Methods for Regression and Classification"
+author: "12433732 - Stefan Merdian"
+date: "2024-10-18"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    extra_dependencies: ["booktabs", "longtable", "array", "caption"]
+  html_document:
+    df_print: paged
+documentclass: article
+geometry:
+- top=10mm
+- bottom=15mm
+- left=10mm
+- right=10mm
+papersize: a4
+fontsize: 8pt
+---
+
+## Get the data
+
+```{r install package, echo=TRUE}
+if(!require(ISLR)) install.packages("ISLR",repos = "http://cran.us.r-project.org")
+data(College,package="ISLR")
+```
+
+## Look into the dataset
+
+```{r echo=TRUE}
+ head(College)
+ str(College)
+ dim(College)
+```
+
+##Data preprocessing
+
+If there is na values, it will be removed
+
+```{r echo=TRUE}
+if (sum(colSums(is.na(College))) > 0) {
+  College <- na.omit(College)
+}
+```
+
+Since our Goal is find a linear regression model which allows to predict the variable **Apps**, based on remaining variables except of the variables **Accept** and **Enroll**. First we will remove those rows, as well the **Apps** coloumn in a separated var as the prediction variable.
+
+```{r echo=TRUE}
+df <- data.frame(College) 
+head(College)
+
+predict_value <- df$Apps
+
+df$Apps <- NULL
+df$Accept <- NULL
+df$Enroll <- NULL
+
+dim(df)
+```
+
+#Task 1
+
+In linear regression, it's assumed that the residuals are normally distributed. If this assumption is violated, as shown by the Shapiro-Wilk test, it can lead to biased estimates and unreliable inference, like incorrect hypothesis testing. Heteroscedasticity (non-constant variance) or skewness in the data can result in inefficient coefficient estimates, making predictions less accurate. Additionally, if the data is heavily skewed or contains outliers, the model might struggle to generalize to new data, leading to poor performance.
+
+Thats why we will take a look in our response data.
+
+```{r echo=TRUE}
+
+hist(predict_value, 
+     main = "Histogram of Apps", 
+     xlab = "Valus", 
+     ylab = "Numbers", 
+     col = "lightblue", 
+     breaks = 20)
+
+
+abline(v = mean(predict_value), col = "red", lwd = 2)
+```
+
+```{r echo=TRUE}
+
+# Shapiro-Wilk-Test durchführen
+shapiro.test(predict_value)
+
+```
+
+From these results, we can clearly see that the data deviates significantly from a normal distribution. The W-value of 0.65408 is quite far from 1, indicating a poor fit to the normal distribution, and the extremely small p-value confirms that this deviation is statistically significant.
+
+In the histogram, the data is not well spread, showing possible skewness or outliers, which is also confirmed by the Shapiro-Wilk test.
+
+So we will do a log-transformation on the response data to adress the issues.
+
+```{r echo=TRUE}
+
+predict_value <- log(predict_value)
+```
+
+```{r echo=TRUE}
+hist(predict_value, 
+     main = "Histogram of Apps", 
+     xlab = "Valus", 
+     ylab = "Numbers", 
+     col = "lightblue", 
+     breaks = 20)
+
+
+abline(v = mean(predict_value), col = "red", lwd = 2)
+
+shapiro.test(predict_value)
+```
+
+After applying the transformation, several key aspects of the data have improved:
+
+-   The Shapiro-Wilk test now shows a much higher W-value, indicating that the residuals are much closer to a normal distribution.
+
+-   The transformation has helped to reduce skewness in the data
+
+Now We will split our data into a training and test set. -\> about 2/3 training and 1/3 test
+
+```{r echo=TRUE}
+set.seed(187)
+
+sample <- sample(c(TRUE, FALSE), nrow(df), replace=TRUE, prob=c(0.64,0.36))
+train_x  <- df[sample, ]
+test_x   <- df[!sample, ]
+
+train_y  <- predict_value[sample ]
+test_y <- predict_value[!sample ]
+
+dim(train_x)
+length(train_y)
+dim(test_x)
+length(test_y)
+
+```
+
+# Task 2
+
+## a) Function lm() 
+
+```{r echo=TRUE}
+res <- lm(train_y ~ ., data = train_x)  # Fit the linear model
+summary(res)
+
+```
+
+Seems like the significant predictors are 'PrivateYes', 'F.Undergrad', 'Outstate', 'Room.Board', 'perc.alumni', 'Expend', and 'Grad.Rate'. Some variables like 'Top10perc', 'Books', and 'PhD' do not seem to have a significant impact and could potentially be removed to simplify the model.
+
+```{r echo=TRUE}
+par(mfrow=c(2,2))  # 2 rows, 1 column
+plot(res)
+```
+
+Are the model assumptions fulfilled?
+
+- Residuals vs Fitted: There’s a slight curve in the red line, suggesting some non-linearity might be present. 
+
+- Q-Q Residuals: Most Residuals are on the line, idicates normal distribution, but with some extremes at the tail
+
+- Scale-Location: The slight curved red line, indicate there is some heteroscedasticity.
+
+- Residuals vs Leverag: Since there is no points outside the distance, meaning there is no significant outliers.
+
+## b) Manually compute the LS coefficients
+
+```{r echo=TRUE}
+X <- model.matrix(train_y ~ ., data = train_x)
+head(X)
+
+```
+
+```{r echo=TRUE}
+beta_hat <- solve(t(X) %*% X) %*% t(X) %*% train_y
+beta_hat
+
+```
+
+How is R handling binary variables, and how can you interpret the corresponding regression coefficient?
+
+**A:** R handles binary variables by automatically converting them into dummy variables. For a binary variable like Private, which has values "Yes" and "No", R will convert this into a variable with values 0 (for "No") and 1 (for "Yes").
+
+How can you interpret the corresponding regression coefficient?:
+
+**A:** A negative coefficient means that, if the corresponding predictor variable increases (`PrivateYes`), the response variable (`Apps`) will decrease.
+
+Since `PrivateYes` has a negative coefficient, it means that private institutions tend to have lower acceptance rates than non-private institution.
+
+### Comparing the coefficients of both models
+
+```{r echo=TRUE}
+lm_coef <- coef(res)
+
+cbind(Manual = beta_hat, lm = lm_coef)
+```
+
+We can see both coefficients are same.
+
+## c) Compare graphically
+
+Get Predictions
+
+```{r echo=TRUE}
+train_pred <- predict(res, newdata = train_x)
+test_pred <- predict(res, newdata = test_x)
+```
+
+Graphically Compare Observed vs. Predicted Values:
+
+```{r echo=TRUE}
+plot(train_y, train_pred, 
+     main = "Observed vs. Predicted (Training Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "blue", pch = 16)
+abline(0, 1, col = "red")
+```
+
+Overall, the model performs well on the training data, with predictions closely matching the observed values for a large portion of the data. There are some deviations especially for lower and higher observed values, indicating potential areas for improvement, but the model generally captures the relationship well.
+
+```{r echo=TRUE}
+plot(test_y, test_pred, 
+     main = "Observed vs. Predicted (Test Data)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "green", pch = 16)
+abline(0, 1, col = "red") 
+```
+
+The model is showing kinda similar performance on the test data, but it is less accurate for higher observed values espacally for the values over 9, where it tends to underestimate.
+
+## d) RMSE
+
+```{r echo=TRUE}
+rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted)^2))
+}
+
+
+train_rmse <- rmse(train_y, train_pred)
+cat("RMSE for Training Data:", train_rmse, "\n")
+
+
+test_rmse <- rmse(test_y, test_pred)
+cat("RMSE for Test Data:", test_rmse, "\n")
+
+```
+
+Both values have smaller value, which is good, beacuse a lower RMSE indicates better model performance. The Training RMSE (0.5356) is lower than the Test RMSE (0.6299). This is expected, as models usually perform better on the data they were trained on, but the difference between the two RMSE values is relatively small, means the model is not significantly overfitting and is generalizing well
+
+# Task 3 Reduced model
+
+We will exclude all input variables from the model which were not significant in 2(a), and compute the LS-estimator.
+
+```{r echo=TRUE}
+summary(res)
+```
+
+## a) : Exclude all input
+
+We will exlude `Top10perc`, `Books`, `Personal`, `PhD`,`Terminal`.
+
+```{r echo=TRUE}
+reduced_train <- train_x
+reduced_train$Top10perc <- NULL
+reduced_train$Books <- NULL
+reduced_train$Personal <- NULL
+reduced_train$PhD <- NULL
+reduced_train$Terminal <- NULL
+
+reduced_test <- test_x
+reduced_test$Top10perc <- NULL
+reduced_test$Books <- NULL
+reduced_test$Personal <- NULL
+reduced_test$PhD <- NULL
+reduced_test$Terminal <- NULL
+
+reduced_model <- lm(train_y ~ .,data = reduced_train)
+
+
+summary(reduced_model)
+```
+
+Are now all input variables significant in the model?
+
+There are indeed all significant, even some values become more significant for example `Top25perc` become even more significant.
+
+Why is this not to be expected in general?
+
+Some may become less significant or even insignificant because:
+- When predictors are correlated with each other (multicollinearity), their individual significance can fluctuate when other variables are added or removed from the model.
+
+- By choosing only the significant variables from the full model, we introduce a selection bias that can artificially influence the significance of the remaining variables.
+
+## b)
+
+```{r echo=TRUE}
+reduced_train_pred <- predict(reduced_model, newdata = reduced_train)
+reduced_test_pred <- predict(reduced_model, newdata = reduced_test)
+```
+
+```{r echo=TRUE}
+plot(train_y, reduced_train_pred, 
+     main = "Observed vs.  Predicted (training data) - reduced", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "blue", pch = 16)
+abline(0, 1, col = "red")
+```
+
+```{r echo=TRUE}
+plot(test_y, reduced_test_pred, 
+     main = "Observed vs. Predicted (test data) - reduced", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "green", pch = 16)
+abline(0, 1, col = "red")
+```
+
+For both reduced data sets, it didn't change much compared to the full model.
+## c)
+
+```{r echo=TRUE}
+reduced_train_rmse <- rmse(train_y, reduced_train_pred)
+cat("RMSE for Training Data:", train_rmse, "\n")
+
+
+reduced_test_rmse <- rmse(test_y, reduced_test_pred)
+cat("RMSE for Test Data:", test_rmse, "\n")
+
+```
+Also the RMSE values are similar to the full model.
+
+## d)
+
+```{r echo=TRUE}
+anova(res, reduced_model)
+
+```
+The RSS indicates a better fit for the full model, but its not really significant. Also a small p-value (typically < 0.05) indicates that the full model provides a significantly better fit to the data than the reduced model. Since the p-value is **0.06331**, indicates that the full model is not significant better than the reduced one. There is no strong evidence to suggest that the full model is significantly better.
+
+# Task 4 Variable selection
+
+```{r echo=TRUE}
+full_model <- lm(train_y ~ ., data = train_x)
+
+empty_model <- lm(train_y ~ 1, data = train_x) 
+```
+
+```{r echo=TRUE}
+forward_model <- step(empty_model, scope = formula(full_model), direction = "forward")
+
+summary(forward_model)
+```
+Highest AIC is -584.99 
+```{r echo=TRUE}
+
+backward_model <- step(full_model, direction = "backward")
+
+summary(backward_model)
+
+```
+Also highest AIC is -584.99
+```{r echo=TRUE}
+rmse <- function(observed, predicted) {
+  sqrt(mean((observed - predicted)^2))
+}
+
+forward_train_pred <- predict(forward_model, newdata = train_x)
+forward_test_pred <- predict(forward_model, newdata = test_x)
+
+forward_train_rmse <- rmse(train_y, forward_train_pred)
+forward_test_rmse <- rmse(test_y, forward_test_pred)
+
+cat("Forward Model RMSE (Training):", forward_train_rmse, "\n")
+cat("Forward Model RMSE (Test):", forward_test_rmse, "\n")
+
+backward_train_pred <- predict(backward_model, newdata = train_x)
+backward_test_pred <- predict(backward_model, newdata = test_x)
+
+backward_train_rmse <- rmse(train_y, backward_train_pred)
+backward_test_rmse <- rmse(test_y, backward_test_pred)
+
+cat("Backward Model RMSE (Training):", backward_train_rmse, "\n")
+cat("Backward Model RMSE (Test):", backward_test_rmse, "\n")
+
+
+```
+So we have also similar RMSE values.
+```{r echo=TRUE}
+plot(train_y, forward_train_pred, 
+     main = "Observed vs. Predicted (Training Data - Forward Selection)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "blue", pch = 16)
+abline(0, 1, col = "red")
+
+plot(test_y, forward_test_pred, 
+     main = "Observed vs. Predicted (Test Data - Forward Selection)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "green", pch = 16)
+abline(0, 1, col = "red")
+
+
+```
+
+```{r echo=TRUE}
+plot(train_y, backward_train_pred, 
+     main = "Observed vs. Predicted (Training Data - Backward Selection)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "blue", pch = 16)
+abline(0, 1, col = "red")
+
+plot(test_y, backward_test_pred, 
+     main = "Observed vs. Predicted (Test Data - Backward Selection)", 
+     xlab = "Observed Values", 
+     ylab = "Predicted Values", 
+     col = "green", pch = 16)
+abline(0, 1, col = "red")
+
+```

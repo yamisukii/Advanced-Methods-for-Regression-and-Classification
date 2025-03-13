@@ -1,0 +1,324 @@
+---
+title: "Exercise 9 Advanced Methods for Regression and Classification"
+author: "12433732 - Stefan Merdian"
+date: "2024-12-15"
+output: pdf_document
+---
+
+```{r echo=TRUE}
+library(ROCit)
+
+data("Diabetes", package="ROCit")
+head(Diabetes)
+dim(Diabetes)
+```
+```{r echo=TRUE}
+numeric_data <- Diabetes[, sapply(Diabetes, is.numeric)]
+na_counts <- colSums(is.na(Diabetes))
+print(na_counts)
+```
+```{r echo=TRUE}
+library(corrplot)
+numeric_data <- Diabetes[, sapply(Diabetes, is.numeric)]
+
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+corrplot(cor_matrix, method = "color", 
+         tl.col = "black", tl.cex = 0.8, addCoef.col = "black", number.cex = 0.5)
+```
+
+```{r echo=TRUE}
+Diabetes$id <- NULL
+Diabetes$height <- NULL
+Diabetes$weight <- NULL
+Diabetes$location <- NULL
+Diabetes$bp.2s <- NULL
+Diabetes$bp.2d <- NULL
+Diabetes$glyhb <- NULL 
+Diabetes$ratio <- NULL 
+Diabetes$whr <- NULL 
+Diabetes$dtest <- ifelse(Diabetes$dtest == "+", 1, 0)
+Diabetes <- na.omit(Diabetes)
+
+str(Diabetes)
+```
+
+**Which of the remaining variables should be considered in the model? Argue why it could make sense to exclude predictor variables:**
+
+We can exclude the following variables:
+
+- id: It is purely an identifier and holds no relevance to the prediction.
+- height and weight: Since BMI is already calculated from these variables, retaining them would introduce multicollinearity without adding new information.
+- location: It is not relevant to diabetes and does not contribute meaningfully to the prediction.
+- bp.2s, bp.2d: we also removed this column because they have to many na values, otherwise we would eliminate to much data
+- The variable glyhb is already reflected in dtest, making it redundant. Similarly, ratio is derived as the ratio between chol and hdl, which makes it highly correlated with these variables. The same applies to whr, as it is calculated using waist and hip, leading to strong correlation.
+
+```{r echo=TRUE}
+set.seed(123) 
+n <- nrow(Diabetes)
+train_indices <- sample(1:n, size = floor(2 * n / 3))
+train_data <- Diabetes[train_indices, ]
+test_data <- Diabetes[-train_indices, ]
+```
+
+# 1) Logistic regression model
+```{r echo=TRUE}
+library(caret)
+
+model <- glm(dtest ~ ., data = train_data, family = "binomial")
+summary(model)
+```
+
+```{r echo=TRUE}
+
+predicted_probs <- predict(model, newdata = test_data, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$dtest)
+misclassification_rate <- sum(predicted_class != test_data$dtest) / nrow(test_data)
+
+
+print(conf_matrix)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+```
+
+
+**Which problems do you face?:**
+
+ - Multicollinearity: Many variables exhibited high correlation (e.g., ratio, whr), leading to singularity issues. I used the correlation matrix to identify and address this.
+ - Binary Conversion: The target variable had + and - signs, which needed to be converted into a binary format (0/1).
+
+
+# 2) Sparse logistic regression model
+```{r echo=TRUE}
+library(glmnet)
+
+cv_model <- cv.glmnet(model.matrix(dtest ~ ., data = train_data) , train_data$dtest, family = "binomial", alpha = 1)
+plot(cv_model)
+```
+```{r echo=TRUE}
+predicted_probs <- predict(cv_model, newx = model.matrix(dtest ~ ., data = train_data), s = "lambda.min", type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+conf_matrix <- table(Predicted = predicted_class, Actual = train_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != train_data$dtest) / length(train_data$dtest)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+```
+
+```{r echo=TRUE}
+predicted_probs <- predict(cv_model, newx = model.matrix(dtest ~ ., data = test_data), s = "lambda.min", type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != test_data$dtest) / length(test_data$dtest)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+```
+
+The results of the sparse logistic regression using cv.glmnet on the train and test datasets show perfect performance.
+
+For the training data:
+
+ - 201 true negatives and 17 false negative
+ - 22 true positives and 4 false postive
+ - MKR: 8.66% 
+
+
+For the test data, the confusion matrix shows:
+
+ - 103 true negatives and 8 false negative
+ - 9 true positives and 2 false postive
+ - MKR: 8.2%
+
+
+# 3) GAM models
+
+## a)
+```{r echo=TRUE}
+library(mgcv)
+gam_model1 <- gam(dtest ~ s(age) + s(bmi) + s(stab.glu) + s(waist) + s(bp.1s) + s(bp.1d) + 
+                        s(chol) + s(hdl)  + s(time.ppn) + 
+                        gender + frame, 
+                      family = "binomial", 
+                      data = train_data)
+summary(gam_model1)
+```
+
+```{r echo=TRUE}
+predicted_probs <- predict(gam_model1, newdata = train_data, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+conf_matrix <- table(Predicted = predicted_class, Actual = train_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != train_data$dtest) / nrow(train_data)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+```
+
+## b)
+```{r echo=TRUE}
+gam_model2 <- gam(dtest ~ s(age, k = 5) + s(bmi, k = 5) + s(stab.glu, k = 5) +
+                         s(waist, k = 5)  + s(bp.1s, k = 5) + 
+                         s(bp.1d, k = 5) +
+                         s(chol, k = 5) + s(hdl, k = 5) + 
+                          s(time.ppn, k = 5) +
+                         gender + frame,
+                       family = binomial,
+                       data = train_data)
+summary(gam_model2)
+
+```
+
+```{r echo=TRUE}
+predicted_probs <- predict(gam_model2, newdata = train_data, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+conf_matrix <- table(Predicted = predicted_class, Actual = train_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != train_data$dtest) / nrow(train_data)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+```
+## c)
+```{r echo=TRUE}
+summary(gam_model1)
+```
+
+In this GAM, the variable s(stab.glu) remains the only statistically significant smooth term, with a p-value < 0.01. Its effective degrees of freedom (edf) is 5.082, indicating a more flexible and moderately non-linear relationship with the response variable.
+
+The smooth term s(hdl) appears not significant with a p-value of 0.59, but its edf is 5.96, showing slight non-linearity.
+
+The remaining smooth terms, such as s(age), s(bmi), s(waist), s(bp.1d), are not statistically significant, with p-values well above 0.05. Their edf values are close to 1, implying these relationships are effectively linear or have no meaningful effect on the response.
+
+
+```{r echo=TRUE}
+summary(gam_model2)
+```
+
+For the second model, the results are quite similar to the previous one, but two variables, s(time.ppn) and s(chol), have become more significant. Additionally, the effective degrees of freedom (edf) appear more normalized, likely due to the restriction on degrees of freedom (k = 5). However, the overall deviance explained is slightly lower compared to the previous model.
+
+## d)
+```{r echo=TRUE}
+par(mar = c(5, 4, 2, 2)) 
+plot(gam_model1, page = 1, shade = TRUE, shade.col = "green")
+
+
+```
+
+All terms are kinda flat or linear. Just hdl and stab.glu has some non-linear relation to dependent variable. The green shaded areas (confidence intervals) are wide for certain predictors, particularly at the edges of the range. This suggests high uncertainty due to a lack of sufficient data in those regions (hdl).
+The model struggles to identify non-linear patterns.
+
+
+
+## e)
+
+```{r echo=TRUE}
+predicted_probs1 <- predict(gam_model1, newdata = test_data, type = "response")
+predicted_class1 <- ifelse(predicted_probs1 > 0.5, 1, 0)
+
+
+conf_matrix1 <- table(Predicted = predicted_class1, Actual = test_data$dtest)
+print("Confusion Matrix1:")
+print(conf_matrix1)
+
+misclassification_rate1 <- sum(predicted_class1 != test_data$dtest) / nrow(test_data)
+cat("Misclassification Rate1:", misclassification_rate1, "\n")
+
+```
+First Confusion Matrix (GAM without degree restriction):
+ - The model correctly predicted 98 instances as class 0 and 9 instances as class 1.
+ - There were 8 false positives  and 7 false negatives .
+ - The misclassification rate is 12.3%.
+ 
+```{r echo=TRUE}
+predicted_probs2<- predict(gam_model2, newdata = test_data, type = "response")
+predicted_class2<- ifelse(predicted_probs2 > 0.5, 1, 0)
+
+conf_matrix2 <- table(Predicted = predicted_class2, Actual = test_data$dtest)
+print("Confusion Matrix2:")
+print(conf_matrix2)
+
+misclassification_rate2 <- sum(predicted_class2 != test_data$dtest) / nrow(test_data)
+cat("Misclassification Rate2:", misclassification_rate2, "\n")
+```
+Second Confusion Matrix (GAM with degree restriction k = 5) same here:
+
+ - The model correctly predicted 99 instances as class 0 and 12 instances as class 1.
+ - There were 6 false positives  and 5 false negatives .
+ - The misclassification rate is 9.01%.
+ 
+The second model appears to be better, likely because it is more generalized and avoids overfitting to the training data.
+
+## f)
+
+We will use thin-plate regression splines with shrinkage (bs = "ts"). The select = TRUE option applies automatic smoothing parameter selection, allowing insignificant smooth terms to shrink effectively toward zero. The model uses the REML method for robust estimation of smoothness penalties.
+
+```{r echo=TRUE}
+
+gam_model_select <- gam(dtest ~ s(age, bs = "ts") + s(bmi, bs = "ts") + 
+                        s(stab.glu, bs = "ts") + s(waist, bs = "ts") + 
+                        s(bp.1s, bs = "ts") + s(bp.1d, bs = "ts") + 
+                        s(chol, bs = "ts") + s(hdl, bs = "ts") + 
+                        s(time.ppn, bs = "ts") + gender + frame,
+                        family = binomial, data = train_data, 
+                        method = "REML", select = TRUE)
+
+summary(gam_model_select)
+plot(gam_model_select)
+
+```
+Based on the summary and plots, stab.glu remains the most significant variable. Additionally, hdl and bp.1s show slight improvements in significance. Therefore, we will select these variables for the shrunk model.
+
+```{r echo=TRUE}
+
+predicted_probs <- predict(gam_model_select, newdata = test_data, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+# Confusion Matrix and Misclassification Rate
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != test_data$dtest) / nrow(test_data)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+
+```
+This is currently the best model so far, with a misclassification rate of 7.4%. In comparison, the other models had:
+
+ - 12.3% for the standard GAM model,
+ - 9.01% for the model with restricted degrees of freedom.
+
+This shows that the shrinkage approach effectively improved the performance by enhancing the impact of significant variables while reducing the influence of less important ones.
+
+## g)
+
+```{r echo=TRUE}
+shrinked_model <- gam(dtest ~s(stab.glu)  + s(bp.1s) + 
+                         s(hdl), 
+                      family = "binomial", 
+                      data = train_data)
+
+predicted_probs <- predict(shrinked_model, newdata = test_data, type = "response")
+predicted_class <- ifelse(predicted_probs > 0.5, 1, 0)
+
+# Confusion Matrix and Misclassification Rate
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$dtest)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+misclassification_rate <- sum(predicted_class != test_data$dtest) / nrow(test_data)
+cat("Misclassification Rate:", misclassification_rate, "\n")
+
+
+```
+After selecting only the three most significant variables from the previous exercise, our predictions on the test set are quite similar to the earlier model, which included many more variables. Although the performance is slightly worse, we have greatly simplified the model while achieving nearly the same results as before.

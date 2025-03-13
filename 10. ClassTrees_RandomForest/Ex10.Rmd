@@ -1,0 +1,398 @@
+---
+title: "Exercise 10 Advanced Methods for Regression and Classification"
+author: "Stefan Merdian"
+date: "2025-01-04"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r echo=TRUE}
+data("Caravan", package="ISLR")
+head(Caravan)
+dim(Caravan)
+
+
+```
+## Preprocessing
+```{r echo=TRUE}
+
+threshold <- 0.7
+
+numeric_vars <- sapply(Caravan, is.numeric)
+numeric_data <- Caravan[, numeric_vars]
+
+cor_matrix <- cor(numeric_data)
+
+
+high_cor_pairs <- which(abs(cor_matrix) > threshold & lower.tri(cor_matrix), arr.ind = TRUE)
+
+print("Highly correlated variable pairs:")
+print(high_cor_pairs)
+
+exclude_vars <- unique(colnames(cor_matrix)[high_cor_pairs[, 2]])
+
+print("Variables to exclude:")
+print(exclude_vars)
+
+cleaned_data <- Caravan[, !(colnames(Caravan) %in% exclude_vars)]
+
+print("Cleaned dataset (variables with high correlation removed):")
+head(cleaned_data)
+
+
+```
+
+```{r echo=TRUE}
+
+library(caret)
+library(dplyr)
+
+set.seed(1234)
+trainIndex <- createDataPartition(cleaned_data$Purchase, p = 0.7, list = FALSE) 
+
+trainData <- Caravan[trainIndex, ]
+testData <- Caravan[-trainIndex, ]
+
+cat("Training set Purchase cases:\n")
+cat("Yes:",sum(trainData$Purchase == 'Yes'))
+cat(" ")
+cat("No:",sum(trainData$Purchase == 'No'))
+cat("\n")
+cat("Test set Purchase cases:\n")
+cat("Yes:",sum(testData$Purchase == 'Yes'))
+cat(" ")
+cat("No:",sum(testData$Purchase == 'No'))
+```
+# Task 1
+
+## a) Classification Tree
+```{r echo=TRUE}
+library(rpart)
+T0 <- rpart(Purchase ~ ., 
+            data = trainData, 
+            method = "class", 
+            control = rpart.control(cp = 0.0001, xval = 10)) 
+
+```
+
+## b) 
+```{r echo=TRUE}
+plot(T0)
+text(T0, use.n = TRUE, cex = 0.8)
+
+```
+
+The tree attempts to classify "Purchase" based on conditions, but the dominance of "No" (class 0) in the data likely influences the majority of the predictions. For instance the root node starts with all samples (2711/69), where 2711 are "No" (class 0), and 69 are "Yes" (class 1). The first split is based on the variable PPERSAUT at a threshold of 5.5.
+
+First Split:
+
+ - If PPERSAUT <= 5.5: The majority class remains "No" (264/5).
+ - If PPERSAUT > 5.5: Further splits occur to classify the data more granularly.
+
+## c) Predict in test set 
+```{r echo=TRUE}
+test_predictions <- predict(T0, testData, type = "class")  
+
+conf_matrix <- table(Predicted = test_predictions, Actual = testData$Purchase)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+true_positive <- conf_matrix[2, 2]
+true_negative <- conf_matrix[1, 1]
+false_positive <- conf_matrix[2, 1]
+false_negative <- conf_matrix[1, 2]  
+
+sensitivity <- true_positive / (true_positive + false_negative)
+
+specificity <- true_negative / (true_negative + false_positive)
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+
+```
+
+## d)
+```{r echo=TRUE}
+plotcp(T0)
+```
+Y-Axis shows the cross-validation relative error for the tree at each level of pruning.
+The relative error measures how well the tree predicts on unseen data. Lower values indicate better performance
+
+To determine the optimal tree complexity, you can refer to the complexity parameter table. So it the optimal tree complexity depends on whether you prioritize:
+
+ - Accuracy (minimum xerror): Slightly larger trees.
+ - Simplicity (1-SE Rule): Smaller, less complex trees.
+ 
+We can not take the min, because it is just the root. So we will pick just pick the the value in the next step.
+
+```{r echo=TRUE}
+optimal_cp <- 0.0037
+```
+
+## e)
+```{r echo=TRUE}
+T0_pruned <- prune(T0, cp = optimal_cp)
+plot(T0_pruned, uniform = TRUE)
+text(T0_pruned, use.n = TRUE, cex = 0.6)
+```
+## f)
+
+```{r echo=TRUE}
+test_predictions <- predict(T0_pruned, testData, type = "class") 
+
+
+conf_matrix <- table(Predicted = test_predictions, Actual = testData$Purchase)
+cat("Confusion Matrix:\n")
+print(conf_matrix)
+
+true_positive <- conf_matrix[2, 2]  
+true_negative <- conf_matrix[1, 1]  
+false_positive <- conf_matrix[2, 1]  
+false_negative <- conf_matrix[1, 2] 
+
+sensitivity <- true_positive / (true_positive + false_negative)
+
+specificity <- true_negative / (true_negative + false_positive)
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+
+```
+
+We observed a slight decreased value. This might be caused by not using the proper
+cp value. Also looking in the pruned model only very few variables are left, which might also have an decreasing effect.
+
+## g)
+
+```{r echo=TRUE}
+library(rpart)
+
+class_weights <- ifelse(trainData$Purchase == 1, sum(trainData$Purchase == 0) / sum(trainData$Purchase == 1),1)  
+
+T0_weighted <- rpart(Purchase ~ ., 
+                     data = trainData, 
+                     method = "class", 
+                     weights = class_weights, 
+                     control = rpart.control(cp = 0.001))
+
+
+test_predictions_weighted <- predict(T0_weighted, testData, type = "class")
+
+
+conf_matrix_weighted <- table(Predicted = test_predictions_weighted, Actual = testData$Purchase)
+cat("Confusion Matrix with Class Weights:\n")
+print(conf_matrix_weighted)
+
+
+true_positive_weighted <- conf_matrix_weighted[2, 2]
+true_negative_weighted <- conf_matrix_weighted[1, 1]
+false_positive_weighted <- conf_matrix_weighted[2, 1]
+false_negative_weighted <- conf_matrix_weighted[1, 2]
+
+sensitivity_weighted <- true_positive_weighted / (true_positive_weighted + false_negative_weighted)
+specificity_weighted <- true_negative_weighted / (true_negative_weighted + false_positive_weighted)
+balanced_accuracy_weighted <- (sensitivity_weighted + specificity_weighted) / 2
+
+cat("Balanced Accuracy with Class Weights:", balanced_accuracy_weighted, "\n")
+
+```
+This is by far the best accuracy value we have achieved, primarily because we accounted for the balanced weights. By incorporating class weights, the model was better able to address the class imbalance, leading to a significant improvement in performance
+
+# Task 2
+
+## a)
+
+```{r echo=TRUE}
+library(randomForest)
+rf_model <- randomForest(Purchase ~ ., data = trainData)
+
+rf_predictions <- predict(rf_model, testData)
+```
+
+```{r echo=TRUE}
+
+conf_matrix <- table(Predicted = rf_predictions, Actual = testData$Purchase)
+cat("Confusion Matrix for Random Forest:\n")
+print(conf_matrix)
+
+true_positive <- conf_matrix[2, 2] 
+true_negative <- conf_matrix[1, 1]  
+false_positive <- conf_matrix[2, 1]  
+false_negative <- conf_matrix[1, 2] 
+
+
+sensitivity <- true_positive / (true_positive + false_negative)
+specificity <- true_negative / (true_negative + false_positive)
+balanced_accuracy <- (sensitivity + specificity) / 2
+
+
+cat("Sensitivity:", sensitivity, "\n")
+cat("Specificity:", specificity, "\n")
+cat("Balanced Accuracy:", balanced_accuracy, "\n")
+```
+## b)
+
+```{r echo=TRUE}
+plot(rf_model)
+```
+
+This plot shows the error rate of the Random Forest model as a function of the number of trees built. The x-axis represents the number of trees in the Random Forest model. In this case, the model was trained with 500 trees. The y-axis represents the error rate for different parts of the model.
+
+ - Black Line: Overall error rate. The overall error stabilizes as the number of trees increases, indicating that adding more trees does not significantly improve the model after a certain point
+
+ - Red Line: Error rate for class "No" (or 0). This is the error rate for predicting the majority class ("No").
+The error is very low because the majority class is easier to predict.
+
+ - Green Line: Error rate for class "Yes" (or 1). This is the error rate for predicting the minority class ("Yes").
+The error is higher because the model struggles more with the minority class due to class imbalance.
+
+
+## c)
+
+### sampsize
+
+The sampsize parameter in the randomForest() function controls the number of samples drawn for each tree. By default, randomForest() samples approximately two-thirds of the training data for each tree. Modifying sampsize allows you to customize this behavior.
+
+sampsize = c(100, 100) ensures each tree samples 100 examples from each class ( "No" and "Yes"). 
+
+```{r echo=TRUE}
+rf_model_balanced <- randomForest(
+  Purchase ~ ., 
+  data = trainData, 
+  sampsize = c(100, 100)  # Equal sampling from both classes
+
+)
+
+rf_predictions_balanced <- predict(rf_model_balanced, testData)
+
+conf_matrix_balanced <- table(Predicted = rf_predictions_balanced, Actual = testData$Purchase)
+cat("Confusion Matrix with Balanced Sampling:\n")
+print(conf_matrix_balanced)
+
+true_positive <- conf_matrix_balanced[2, 2]
+true_negative <- conf_matrix_balanced[1, 1]
+false_positive <- conf_matrix_balanced[2, 1]
+false_negative <- conf_matrix_balanced[1, 2]
+
+sensitivity <- true_positive / (true_positive + false_negative)
+specificity <- true_negative / (true_negative + false_positive)
+
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+cat("Balanced Accuracy with Balanced Sampling:", balanced_accuracy, "\n")
+
+```
+### classwt
+
+The classwt parameter in the randomForest() function allows you to specify weights for each class. This is particularly useful for imbalanced datasets, as it helps the Random Forest algorithm give more importance to the minority class during model training.
+
+```{r echo=TRUE}
+
+class_weights <- c(
+  "No" = sum(trainData$Purchase == "Yes") / length(trainData$Purchase),  # Weight for "No"
+  "Yes" = sum(trainData$Purchase == "No") / length(trainData$Purchase)   # Weight for "Yes"
+)
+
+rf_model_classwt <- randomForest(
+  Purchase ~ ., 
+  data = trainData, 
+  classwt = class_weights # Specify class weights
+
+)
+
+rf_predictions_classwt <- predict(rf_model_classwt, testData)
+
+conf_matrix_classwt <- table(Predicted = rf_predictions_classwt, Actual = testData$Purchase)
+cat("Confusion Matrix with Class Weights:\n")
+print(conf_matrix_classwt)
+
+true_positive <- conf_matrix_classwt[2, 2]
+true_negative <- conf_matrix_classwt[1, 1]
+false_positive <- conf_matrix_classwt[2, 1]
+false_negative <- conf_matrix_classwt[1, 2]
+
+sensitivity <- true_positive / (true_positive + false_negative)
+specificity <- true_negative / (true_negative + false_positive)
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+cat("Balanced Accuracy with Class Weights:", balanced_accuracy, "\n")
+
+```
+
+### cutoff
+
+The cutoff parameter in the randomForest() function controls the probability threshold for assigning class labels. By default, the cutoff is set equally for all classes  (cutoff = c(0.5, 0.5) for binary classification), meaning the class with a predicted probability above 50% is selected.
+
+For a highly imbalanced dataset, we might want to increase the sensitivity (recall) for the minority class ("Yes") by lowering its threshold.
+
+```{r echo=TRUE}
+
+rf_model_cutoff <- randomForest(
+  Purchase ~ ., 
+  data = trainData, 
+  cutoff = c(0.7, 0.3),  # Higher priority for class "Yes"
+
+)
+
+rf_predictions_cutoff <- predict(rf_model_cutoff, testData)
+
+conf_matrix_cutoff <- table(Predicted = rf_predictions_cutoff, Actual = testData$Purchase)
+cat("Confusion Matrix with Modified Cutoff:\n")
+print(conf_matrix_cutoff)
+
+true_positive <- conf_matrix_cutoff["Yes", "Yes"]
+true_negative <- conf_matrix_cutoff["No", "No"]
+false_positive <- conf_matrix_cutoff["Yes", "No"]
+false_negative <- conf_matrix_cutoff["No", "Yes"]
+
+sensitivity <- true_positive / (true_positive + false_negative)
+specificity <- true_negative / (true_negative + false_positive)  
+
+balanced_accuracy <- (sensitivity + specificity) / 2
+cat("Balanced Accuracy with Modified Cutoff:", balanced_accuracy, "\n")
+
+```
+## d)
+
+```{r echo=TRUE}
+
+rf_model_sampsize <- randomForest(
+  Purchase ~ ., 
+  data = trainData, 
+  sampsize = c(100, 100),  # Balanced sampling for both classes
+  importance = TRUE
+)
+
+```
+
+```{r echo=TRUE}
+plot(rf_model_sampsize, main = "Error Rate vs. Number of Trees")
+
+```
+Our model was trained with up to 500 trees. The error rate stabilizes after around 100 trees, indicating that the model has converged and adding more trees does not improve performance significantly. The error rate for the majority class is consistently low because it is easier for the model to correctly classify the dominant class, but it is by far better than our initial tree. 
+
+The error rate for the minority class is still higher, but definitely a big improvement compared to the first one.
+
+The balanced sampling (sampsize) has helped reduce the error for the minority class ("Yes"), but it still remains higher than for the majority class , which is expected due to the inherent difficulty of predicting the minority class.
+
+```{r echo=TRUE}
+varImpPlot(rf_model_sampsize, main = "Variable Importance")
+
+```
+This plot shows the variable importance for the Random Forest model. 
+
+Mean Decrease in Accuracy:
+
+This metric calculates how much the model's overall accuracy decreases if a particular variable is removed.
+Variables with a higher "Mean Decrease in Accuracy" are more important for predicting the target variable because their removal significantly impacts model accuracy. We can see 'APLEZIER, etc.' are the most important variables here.
+
+
+Mean Decrease in Gini:
+
+This metric reflects how much a variable contributes to reducing class impurity at each split in the trees.
+Higher values indicate that the variable plays a significant role in splitting the data and improving classification purity.
+
+'PPERSAULT' are the most influential for creating splits in the trees.
+

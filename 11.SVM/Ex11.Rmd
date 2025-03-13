@@ -1,0 +1,150 @@
+---
+title: "Exercise 11 Advanced Methods for Regression and Classification"
+author: "Stefan Merdian"
+date: "2025-01-12"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r echo=TRUE}
+df <- read.csv2("bank.csv")
+str(df)
+```
+# Preprocessing
+```{r echo=TRUE}
+set.seed(123) 
+
+categorical_columns <- c("job", "marital", "education", "default", "housing",
+                         "loan", "contact", "month", "poutcome", "y")
+df[categorical_columns] <- lapply(df[categorical_columns], as.factor)
+df <- na.omit(df)
+
+numeric_columns <- c("age", "balance", "duration", "campaign", "pdays", "previous")
+df[numeric_columns] <- scale(df[numeric_columns])
+
+str(df)
+```
+# Data splitting
+```{r echo=TRUE}
+n <- nrow(df)
+train_indices <- sample(1:n, size = floor(2 * n / 3))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+```
+
+# a) Apply svm() 
+```{r echo=TRUE}
+library(e1071)
+library(caret)  
+
+svm_model <- svm(y ~ ., data = train_data, kernel = "radial")
+predictions <- predict(svm_model, newdata = test_data)  # Predict on test_data
+conf_matrix <- table(Predicted = predictions, Actual = test_data$y)  # Use test_data$y
+
+print("Confusion Matrix:")
+print(conf_matrix)
+
+conf_metrics <- confusionMatrix(as.factor(predictions), as.factor(test_data$y))
+balanced_accuracy <- mean(conf_metrics$byClass[c("Sensitivity", "Specificity")])
+
+print(paste("Balanced Accuracy:", round(balanced_accuracy, 4)))
+
+```
+
+
+# b) Parameter tuning
+```{r echo=TRUE}
+gamma_values <- c(0.01, 0.1, 1, 10)
+cost_values <- c(1, 10, 100, 1000)
+
+set.seed(123)
+tuning_result <- tune.svm(y ~ ., data = train_data,
+                          kernel = "radial",
+                          gamma = gamma_values,
+                          cost = cost_values)
+
+print(tuning_result)
+print("Best Parameters:")
+print(tuning_result$best.parameters)
+
+
+
+```
+The best Paramters for our setup are:
+
+- gamma: 0.01
+- const: 100
+
+
+# c) Use best model
+
+```{r echo=TRUE}
+svm_bestPara <- svm(y~.,data = train_data,
+                          kernel = "radial",
+                          gamma = as.numeric(tuning_result$best.parameters[1]),
+                          cost = as.numeric(tuning_result$best.parameters[2]))
+
+predictions <- predict(svm_bestPara, newdata = test_data)  
+conf_matrix <- table(Predicted = predictions, Actual = test_data$y)  
+
+print("Confusion Matrix:")
+print(conf_matrix)
+
+conf_metrics <- confusionMatrix(as.factor(predictions), as.factor(test_data$y))
+balanced_accuracy <- mean(conf_metrics$byClass[c("Sensitivity", "Specificity")])
+
+print(paste("Balanced Accuracy:", round(balanced_accuracy, 4)))
+
+```
+
+We used now the best parameters, calculated in advanced and indeed it improved.
+From: 0.5488 To : 0.6422
+
+# d) Improve the misclassification error
+
+```{r echo=TRUE}
+class_weights <- list(no = 1, yes = table(train_data$y)["no"] / table(train_data$y)["yes"])
+
+custom_error_fun <- function(true, predicted) {
+  cm <- caret::confusionMatrix(as.factor(predicted), as.factor(true))
+  1 - mean(cm$byClass[c("Sensitivity", "Specificity")])
+}
+
+tuning_result <- tune(
+  svm,
+  y ~ .,
+  data = train_data,
+  kernel = "radial",
+  ranges = list(gamma = c(0.01, 0.1, 1), cost = c(1, 10, 100)),
+  tunecontrol = tune.control(error.fun = custom_error_fun),
+  class.weights = class_weights
+)
+print(tuning_result$best.parameters)
+```
+
+```{r echo=TRUE}
+svm_best_model <- svm(
+  y ~ .,
+  data = train_data,
+  kernel = "radial",
+  gamma = as.numeric(tuning_result$best.parameters$gamma),
+  cost = as.numeric(tuning_result$best.parameters$cost),
+  class.weights = class_weights
+)
+
+predictions <- predict(svm_best_model, newdata = test_data)
+conf_matrix <- table(Predicted = predictions, Actual = test_data$y)
+
+print("Confusion Matrix:")
+print(conf_matrix)
+
+conf_metrics <- caret::confusionMatrix(as.factor(predictions), as.factor(test_data$y))
+balanced_accuracy <- mean(conf_metrics$byClass[c("Sensitivity", "Specificity")])
+
+print(paste("Balanced Accuracy:", round(balanced_accuracy, 4)))
+```
+
+Did the balanced accuracy improve?
+ 
+Yes it improved a lot. From: 0.6442 To: 0.8021
